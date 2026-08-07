@@ -10,7 +10,7 @@ A LangGraph supervisor/worker agent over a UAE regulatory corpus (DIFC Data Prot
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL%20+%20pgvector-4169E1?logo=postgresql&logoColor=white)
 ![n8n](https://img.shields.io/badge/n8n-2.31.6-EA4B71?logo=n8n&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-61%20passing-success)
+[![tests](https://github.com/HaifaAljundi/compliance-copilot/actions/workflows/tests.yml/badge.svg)](https://github.com/HaifaAljundi/compliance-copilot/actions/workflows/tests.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---

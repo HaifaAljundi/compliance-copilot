@@ -1,0 +1,48 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# The offline suite is the point of this workflow: routing, reducers, query
+# cleaning, and the webhook retry/idempotency policy all fail *silently* rather
+# than loudly, so they are exactly the tests worth running on every push. The
+# integration tests are deselected here — they need live pgvector, Ollama and
+# Groq, none of which belong in CI.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test (offline only)
+        # Collection imports every test module, including the integration ones,
+        # and app.config declares its secrets as required fields. Dummy values
+        # satisfy import without touching any real service.
+        env:
+          PGVECTOR_PASSWORD: ci-dummy
+          GROQ_API_KEY: ci-dummy
+          N8N_WEBHOOK_SECRET: ci-dummy
+          AGENT_API_KEY: ci-dummy
+        run: pytest -m 'not integration'
