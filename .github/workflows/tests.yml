@@ -20,9 +20,11 @@ jobs:
         working-directory: agent
 
     steps:
-      - uses: actions/checkout@v7
+      # Pinned to exact release tags, matching this repo's convention for
+      # images and dependencies. setup-uv publishes no moving `v9` alias.
+      - uses: actions/checkout@v7.0.1
 
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: agent/uv.lock
