@@ -1,0 +1,197 @@
+# n8n — single personal/internal instance for n8n.example.com
+# Runtime: Colima Docker on the Mac (headless; no Docker Desktop).
+# TLS is terminated UPSTREAM by Caddy on the jump host — this container serves plain HTTP.
+#
+# Runs under Docker Compose v2 (installed here as `docker-compose`). `mem_limit` is honoured.
+#
+# Images are PINNED (never :latest) — see RUNBOOK.md "Upgrade" for the deliberate bump procedure.
+#   n8n      2.31.6          (docker.n8n.io/n8nio/n8n)
+#   postgres 16.14-alpine
+#
+# Data volumes are EXTERNAL + pre-created (setup step in RUNBOOK) so that:
+#   - names are stable (`n8n_data`, `n8n_pgdata`) for backup.sh regardless of project prefix
+#   - `docker-compose down -v` can NEVER delete your data
+
+services:
+  postgres:
+    image: postgres:16.14-alpine
+    container_name: n8n_postgres
+    restart: always
+    mem_limit: 1g                     # blast-radius cap: a runaway PG hits this, not a client app
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: n8n
+      # keep client auth scram (default) + data checksums off (default) — nothing exotic
+    volumes:
+      - n8n_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Vector store for RAG (n8n PGVector node + the LangGraph agent share this ONE corpus).
+  # Deliberately a SEPARATE Postgres from the `postgres` service above: that one holds live
+  # execution + credential data and is not put in the path of a feature experiment.
+  # `postgres:16.14-alpine` cannot host this — it has no `vector` extension available
+  # (verified: select count(*) from pg_available_extensions where name='vector' -> 0).
+  pgvector:
+    image: pgvector/pgvector:pg16          # PINNED; pg16 matches the existing PG major
+    container_name: n8n_pgvector
+    restart: always
+    mem_limit: 1g                          # same blast-radius cap as the `postgres` service
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ${PGVECTOR_PASSWORD:?set PGVECTOR_PASSWORD in .env}
+      POSTGRES_DB: rag
+    volumes:
+      - n8n_pgvector_data:/var/lib/postgresql/data
+      # Runs ONCE on an empty data dir: CREATE EXTENSION vector. Scripted rather than a
+      # manual psql step so a volume rebuild or a restore comes back identical.
+      - ./pgvector/initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      # LOOPBACK ONLY. Note the explicit 127.0.0.1 — this is not the same as n8n's
+      # "5678:5678", which binds 0.0.0.0, becomes LAN-reachable through Colima, and is
+      # precisely why the pf anchor had to exist. Bound to loopback, this port is
+      # unreachable from the LAN and needs no firewall rule.
+      #
+      # Why publish at all: the ingestion script runs on the HOST (it fetches documents
+      # from the internet and parses PDFs), so it needs a route to the database that
+      # `pgvector:5432` — a compose-network name — does not provide.
+      #
+      # 5433 because a native Postgres already holds 5432 on this machine.
+      # In-cluster consumers (n8n, and later the agent service) still use `pgvector:5432`
+      # and never touch this port.
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.31.6
+    container_name: n8n
+    restart: always
+    mem_limit: 3g                     # generous for occasional heavy/AI workflows; caps runaway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Bind on the VM's 0.0.0.0 -> Colima forwards to the Mac's 0.0.0.0:5678 (LAN-reachable).
+      # LAN exposure is then restricted to the jump host by the pf anchor (see pf/).
+      - "5678:5678"
+    environment:
+      # --- Public URL / behind reverse proxy that terminates TLS ---
+      N8N_HOST: n8n.example.com
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http                              # container really serves HTTP
+      N8N_EDITOR_BASE_URL: https://n8n.example.com/    # force https + no :5678 in generated URLs
+      N8N_WEBHOOK_URL: https://n8n.example.com/        # base for test + prod webhook URLs (2.x name)
+      N8N_PROXY_HOPS: "1"                             # exactly one proxy (Caddy) sets X-Forwarded-*
+      # --- Timezone (container + n8n scheduler/cron) ---
+      GENERIC_TIMEZONE: Asia/Dubai
+      TZ: Asia/Dubai
+      # --- Encryption key (persistent; from .env; never logged/committed) ---
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      # --- Database: Postgres ---
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # --- Binary data on disk (keeps the DB small over years) ---
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      # --- Execution data pruning (bounded growth) ---
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336"                  # hours = 14 days
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: "10000"
+      # --- Long executions: keep the 5-min Code-node runner timeout (default drops to 60s later) ---
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      # --- Hygiene ---
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_HIRING_BANNER_ENABLED: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # LangGraph compliance agent. Reaches n8n at http://n8n:5678 and the vector store at
+  # pgvector:5432, both over this compose network — so neither direction of the
+  # integration crosses the public internet, needs a pf rule, or touches the Caddy config.
+  agent:
+    build: ./agent
+    container_name: n8n_agent
+    restart: always
+    mem_limit: 2g                      # blast-radius cap, as with every other service here
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    # Secrets are READ FROM agent/.env by the container, not interpolated by compose.
+    #
+    # `${GROQ_API_KEY}` in an `environment:` block is resolved by docker-compose against
+    # THIS directory's .env — which does not contain it, and should not: agent/.env is
+    # deliberately separate so the agent never reads a file holding N8N_ENCRYPTION_KEY.
+    # env_file hands the file to the container instead, so the secrets stay in one place
+    # and `docker-compose up` does not need them re-declared here.
+    env_file:
+      - ./agent/.env
+    environment:
+      # Non-secret overrides only. These deliberately differ from app/config.py's defaults
+      # or restate them for legibility; they take precedence over env_file.
+      #
+      # Service names, not localhost: this process is in a container alongside n8n.
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: "5432"
+      # Ollama runs on the Mac, not in a container. Colima forwards this despite Ollama
+      # binding 127.0.0.1 on the host — re-verify after any `colima restart`.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      N8N_BASE_URL: http://n8n:5678
+      # Checkpoints live on the mounted volume: a paused human-approval interrupt must
+      # survive a container restart, or /resume has nothing to resume.
+      CHECKPOINTER: sqlite
+      CHECKPOINT_DB_PATH: /app/data/checkpoints.sqlite
+      TZ: Asia/Dubai
+    volumes:
+      - n8n_agent_data:/app/data       # checkpoints (paused approvals)
+      - n8n_agent_corpus:/app/corpus   # downloaded source PDFs, re-fetchable
+    ports:
+      # LOOPBACK ONLY — for the demo UI in a browser on this Mac.
+      # 8099 because 8088/8090/8091 are already held (8088 is an ssh tunnel).
+      #
+      # Note the explicit 127.0.0.1. n8n's "5678:5678" binds 0.0.0.0, becomes LAN-visible
+      # through Colima, and is exactly why the pf anchor had to exist. Bound to loopback,
+      # this is unreachable from the LAN and needs no firewall rule.
+      #
+      # n8n does NOT use this port — it calls http://agent:8000 over the compose network.
+      # Removing this line breaks nothing except browser access from this machine.
+      - "127.0.0.1:8099:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  n8n_data:
+    external: true
+  n8n_pgdata:
+    external: true
+  n8n_pgvector_data:
+    external: true
+  # NOT external. Unlike the three above, these hold nothing irreplaceable: checkpoints
+  # are in-flight conversation state and the corpus is re-downloadable from its source
+  # URLs. Left as managed volumes so `down -v` can reclaim them, which is the correct
+  # behaviour for regenerable data and the wrong behaviour for the volumes above.
+  n8n_agent_data:
+  n8n_agent_corpus:

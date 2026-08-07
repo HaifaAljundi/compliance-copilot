@@ -1,0 +1,86 @@
+[project]
+name = "compliance-copilot"
+version = "0.1.0"
+description = "LangGraph supervisor/worker agent over a compliance corpus, integrated with n8n"
+requires-python = ">=3.11"
+
+# Direct dependencies are PINNED exactly, matching this repo's convention for container
+# images (see docker-compose.yml: "Images are PINNED (never :latest)"). The reasoning
+# carries over — an agent whose behaviour changes because a transitive prompt template
+# was reworded upstream is not debuggable. Transitives resolve freely; a lock file
+# (uv.lock / requirements.txt) captures those.
+#
+# Versions verified against PyPI on 2026-08-06, not guessed.
+dependencies = [
+    # --- Graph runtime ---
+    # 1.2.x is what brings per-node timeouts and cooperative graceful shutdown, both of
+    # which matter once the Action node can pause on a human approval.
+    "langgraph==1.2.10",
+    "langchain==1.3.14",
+    "langchain-core==1.5.3",
+    # Explicit, not transitive: langchain 1.x does not pull this in. RecursiveCharacter
+    # TextSplitter is used only INSIDE a section — section boundaries come from the
+    # per-document heading patterns in corpus.py, never from character counting.
+    "langchain-text-splitters==1.1.2",
+
+    # --- Models ---
+    "langchain-groq==1.1.3",      # supervisor / analyst / verifier
+    "langchain-ollama==1.1.0",    # embeddings only (nomic-embed-text, local, no egress)
+
+    # --- Vector store ---
+    # THE LEAST STABLE DEPENDENCY HERE (0.0.x) and, awkwardly, the one carrying the
+    # column-name contract with n8n. Pinned hard. Before ever bumping it, re-run the
+    # bidirectional round-trip test — a default column name changing upstream would
+    # break n8n interop silently, returning empty results rather than an error.
+    "langchain-postgres==0.0.17",
+    "psycopg[binary]==3.3.4",     # psycopg 3; the `+psycopg` DSN suffix selects it
+
+    # --- Persistence for the graph ---
+    # Not optional infrastructure: the approval interrupt is only resumable because
+    # state is checkpointed. sqlite for dev, postgres against the pgvector instance.
+    "langgraph-checkpoint-sqlite==3.1.1",
+    "langgraph-checkpoint-postgres==3.1.1",
+
+    # --- Service layer ---
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.1",
+    "pydantic-settings==2.14.2",
+
+    # --- n8n webhook client ---
+    "httpx==0.28.1",
+    # Retry with exponential backoff + jitter. Used ONLY for connect/timeout/5xx —
+    # never 4xx, where a retry just repeats a wrong secret or a malformed payload.
+    "tenacity==9.1.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "respx==0.23.1",          # mock httpx at the transport layer, for the retry tests
+    "ruff==0.16.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Tests must run with no network and no containers. The routing and reducer tests are
+# the ones worth having in CI precisely because they need neither a model nor Postgres.
+addopts = "-q --strict-markers"
+markers = [
+    "integration: needs live pgvector/Ollama/Groq (deselect with -m 'not integration')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

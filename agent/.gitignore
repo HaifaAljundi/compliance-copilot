@@ -1,0 +1,22 @@
+# Secrets — NEVER commit
+.env
+
+# Local state: checkpointer database (conversation threads + paused approvals).
+# Regenerable, and contains user questions — no reason to version it.
+data/
+*.sqlite
+*.sqlite-*
+
+# Corpus + eval outputs. Source documents are re-fetchable from their URLs and the
+# ingestion script is the reproducible artefact; results.csv is a run output.
+corpus/
+evals/results*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,25 @@
+# Secrets — NEVER commit
+.env
+secrets.env
+*.key
+*.pem
+
+# Local backups (kept on internal disk per operator decision; see RUNBOOK)
+n8n-backups/
+*.tar.gz
+*.tgz
+*.sql
+*.sql.gz
+*.sha256
+
+# ...but the pgvector init script is SOURCE, not a dump. Without this negation the
+# `*.sql` rule above hides it, and a fresh clone rebuilds the volume with no `vector`
+# extension — failing only later, at first insert.
+!pgvector/initdb/*.sql
+
+# pf.conf backups produced during install
+pf/*.bak
+*.pf.bak
+
+# macOS
+.DS_Store

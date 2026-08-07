@@ -1,0 +1,223 @@
+{
+  "name": "Agent — action receiver (HMAC + idempotency)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent-action",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "b2000000-0000-4000-8000-000000000001",
+      "name": "Webhook: agent-action",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -460,
+        0
+      ],
+      "webhookId": "agent-action",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL_ID",
+          "name": "Agent shared secret"
+        }
+      },
+      "notes": "rawBody: true is REQUIRED — the agent signs the exact bytes it sent. If n8n parsed the JSON and re-serialised it, key order and whitespace would change and every signature would fail. The raw bytes arrive as binary property 'data'."
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "dataPropertyName": "computed_hmac",
+        "encoding": "hex"
+      },
+      "id": "b2000000-0000-4000-8000-000000000002",
+      "name": "Compute HMAC",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        0
+      ],
+      "notes": "The Crypto node, NOT require('crypto') in a Code node.\n\nn8n's Code sandbox blocks Node built-ins unless NODE_FUNCTION_ALLOW_BUILTIN is set — which needs an n8n restart AND permanently loosens the sandbox for every Code node on the instance. This node does the same job with neither cost.\n\nIn n8n 2.x the secret comes from a CRYPTO CREDENTIAL (field: 'Hmac Secret'), not a node parameter. That is strictly better — credentials are encrypted at rest with N8N_ENCRYPTION_KEY, whereas a node parameter would sit in plaintext in the workflow row.",
+      "credentials": {
+        "crypto": {
+          "id": "REPLACE_WITH_CRYPTO_CREDENTIAL_ID",
+          "name": "Agent HMAC secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compare the computed HMAC against the header, then dedupe.\n// Plain string work only — no Node built-ins, so nothing here hits the sandbox.\n\nconst item = $input.first();\n\n// The signature the agent sent.\nconst headers = $('Webhook: agent-action').first().json.headers || {};\nconst sent = String(headers['x-agent-signature'] || '');\n\n// What the Crypto node computed over the RAW body.\nconst computed = String(item.json.computed_hmac || '');\n\n// Constant-time-ish comparison. crypto.timingSafeEqual is unavailable in this sandbox,\n// so this loops over every character rather than short-circuiting on first mismatch.\n// Length is compared separately, which does leak length — acceptable here because the\n// length of a hex SHA-256 digest is fixed and public anyway.\nfunction safeEqual(a, b) {\n  if (a.length !== b.length) return false;\n  let diff = 0;\n  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);\n  return diff === 0;\n}\n\nif (!safeEqual(sent, computed)) {\n  throw new Error(\n    'HMAC verification failed — body was altered in transit, or the secret does not ' +\n    'match N8N_WEBHOOK_SECRET in agent/.env'\n  );\n}\n\n// Parse the verified body. Header Auth proved the caller knows the secret; the HMAC\n// proved the bytes were not changed. Only now is it safe to act on the contents.\nconst body = JSON.parse(\n  Buffer.from($('Webhook: agent-action').first().binary.data.data, 'base64').toString('utf8')\n);\n\n// IDEMPOTENCY.\n// The agent reuses one run_id across every retry, so a response lost AFTER this workflow\n// committed work arrives again with the same key. Without this check that is a second\n// ticket, a second filing, a second notification.\nconst store = $getWorkflowStaticData('global');\nstore.seen = store.seen || {};\n\n// Bounded to the most recent 500 keys so it cannot grow without limit.\nconst keys = Object.keys(store.seen);\nif (keys.length > 500) {\n  keys.sort((a, b) => store.seen[a] - store.seen[b]);\n  keys.slice(0, keys.length - 500).forEach(k => delete store.seen[k]);\n}\n\nconst duplicate = Boolean(store.seen[body.run_id]);\nstore.seen[body.run_id] = Date.now();\n\nreturn [{\n  json: {\n    duplicate,\n    run_id: body.run_id,\n    action: body.action,\n    payload: body.payload,\n    evidence: body.evidence,\n    approved_by: body.approved_by,\n    schema_version: body.schema_version,\n  },\n}];"
+      },
+      "id": "b2000000-0000-4000-8000-000000000003",
+      "name": "Verify + dedupe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": "={{ false }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000004",
+      "name": "First delivery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1",
+              "name": "status",
+              "value": "would_create_ticket",
+              "type": "string"
+            },
+            {
+              "id": "d2",
+              "name": "title",
+              "value": "={{ $json.payload.title || $json.action }}",
+              "type": "string"
+            },
+            {
+              "id": "d3",
+              "name": "why",
+              "value": "={{ $json.evidence.map(e => e.section + ': ' + e.quote).join(' | ') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000005",
+      "name": "DO THE WORK (replace me)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        -110
+      ],
+      "notes": "Replace with the real downstream action — Jira, email, Sheets, whatever. `evidence` carries the citations that justified this action, so a filing can show WHY without calling back to the agent."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "options": {
+          "responseCode": 202
+        },
+        "responseBody": "={{ JSON.stringify({ accepted: true, executionId: $execution.id, run_id: $('Verify + dedupe').first().json.run_id, duplicate: $('Verify + dedupe').first().json.duplicate }) }}"
+      },
+      "id": "b2000000-0000-4000-8000-000000000006",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        0
+      ],
+      "notes": "202, not 200 — the agent records this as 'accepted', never 'completed'. responseCode must sit inside `options`.\n\nThe body references 'Verify + dedupe' by name because the Set node on the first-delivery branch replaces $json."
+    }
+  ],
+  "connections": {
+    "Webhook: agent-action": {
+      "main": [
+        [
+          {
+            "node": "Compute HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute HMAC": {
+      "main": [
+        [
+          {
+            "node": "Verify + dedupe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify + dedupe": {
+      "main": [
+        [
+          {
+            "node": "First delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First delivery?": {
+      "main": [
+        [
+          {
+            "node": "DO THE WORK (replace me)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DO THE WORK (replace me)": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,129 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Compliance Agent</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--bg:#fbfaf8;--fg:#1c1a17;--dim:#6b655c;--line:#e2ddd4;--accent:#7a5c2e;--ok:#2f6b46;--warn:#8a4b28;--card:#fff}
+  @media(prefers-color-scheme:dark){:root{--bg:#16150f;--fg:#eae6dd;--dim:#9a9287;--line:#302c24;--accent:#c9a227;--ok:#6fbf8b;--warn:#d99a63;--card:#1e1c15}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 ui-serif,Georgia,serif;padding:2rem 1.25rem 4rem}
+  main{max-width:60rem;margin:0 auto}
+  h1{font-size:1.35rem;margin:0 0 .25rem;letter-spacing:-.01em}
+  .sub{color:var(--dim);font-size:.85rem;margin-bottom:1.5rem}
+  form{display:flex;gap:.5rem;margin-bottom:1.25rem}
+  input,button{font:inherit;border:1px solid var(--line);border-radius:.4rem;padding:.6rem .8rem;background:var(--card);color:var(--fg)}
+  input{flex:1}
+  button{cursor:pointer;background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
+  button:disabled{opacity:.5;cursor:default}
+  .pipe{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:1rem;min-height:2rem}
+  .step{font:600 .72rem/1 ui-sans-serif,system-ui;text-transform:uppercase;letter-spacing:.05em;
+        padding:.4rem .6rem;border-radius:.3rem;border:1px solid var(--line);background:var(--card);color:var(--dim)}
+  .step.on{border-color:var(--accent);color:var(--accent)}
+  .step.retry{border-color:var(--warn);color:var(--warn)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:.5rem;padding:1rem 1.15rem;margin-bottom:1rem}
+  .answer{white-space:pre-wrap}
+  .badge{font:600 .7rem/1 ui-sans-serif,system-ui;text-transform:uppercase;letter-spacing:.05em;padding:.25rem .5rem;border-radius:.25rem}
+  .grounded{background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)}
+  .ungrounded{background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn)}
+  h2{font:600 .78rem/1 ui-sans-serif,system-ui;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:0 0 .6rem}
+  .cite{border-left:2px solid var(--accent);padding-left:.8rem;margin-bottom:.9rem}
+  .cite .loc{font:600 .82rem ui-sans-serif,system-ui}
+  .cite .q{color:var(--dim);font-size:.9rem;font-style:italic}
+  .cite a{color:var(--accent)}
+  .meta{color:var(--dim);font:.78rem/1.5 ui-sans-serif,system-ui}
+  .ex{color:var(--dim);font-size:.85rem}
+  .ex button{background:none;border:none;color:var(--accent);cursor:pointer;padding:.15rem 0;text-decoration:underline;font-size:.85rem}
+</style>
+<main>
+  <h1>Compliance document assistant</h1>
+  <div class="sub">DIFC Data Protection Law · CBUAE AML/CFT guidance — answers are refused unless grounded in a cited passage.</div>
+
+  <form id="f">
+    <input id="q" placeholder="Ask about the indexed regulations…" autocomplete="off" required>
+    <button id="go">Ask</button>
+  </form>
+
+  <div class="ex">Try:
+    <button type="button" data-q="If processing relies on consent, what must the controller demonstrate?">consent obligations</button> ·
+    <button type="button" data-q="What must a controller include when notifying a personal data breach?">breach notification</button> ·
+    <button type="button" data-q="What is the VAT registration threshold in the UAE?">something not in the corpus</button>
+  </div>
+
+  <div class="pipe" id="pipe"></div>
+  <div id="out"></div>
+</main>
+<script>
+const $=s=>document.querySelector(s), pipe=$("#pipe"), out=$("#out");
+// Set at build/deploy time. Kept out of the page for a real deployment — this UI is
+// served on the private compose network only.
+const KEY = new URLSearchParams(location.search).get("key") || "";
+
+document.querySelectorAll(".ex button").forEach(b=>b.onclick=()=>{$("#q").value=b.dataset.q; $("#f").requestSubmit();});
+
+const LABEL={supervise:"routing",retrieve:"retrieving",analyze:"analysing",verify:"verifying",refuse:"insufficient evidence",respond:"replying",act:"acting"};
+
+function step(node,retry){
+  const el=document.createElement("span");
+  el.className="step on"+(retry?" retry":"");
+  el.textContent=(LABEL[node]||node)+(retry?` · attempt ${retry}`:"");
+  pipe.appendChild(el);
+}
+
+$("#f").onsubmit=async e=>{
+  e.preventDefault();
+  const question=$("#q").value.trim(); if(!question)return;
+  pipe.innerHTML=""; out.innerHTML=""; $("#go").disabled=true;
+
+  let answer="", grounded=false, attempts=0, queries=[];
+  try{
+    const res=await fetch("/ask/stream",{method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+KEY},
+      body:JSON.stringify({question})});
+    if(!res.ok){throw new Error(res.status===401?"Unauthorized — append ?key=YOUR_AGENT_API_KEY to the URL":`HTTP ${res.status}`);}
+
+    const reader=res.body.getReader(), dec=new TextDecoder(); let buf="";
+    while(true){
+      const {value,done}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const parts=buf.split("\n\n"); buf=parts.pop();
+      for(const p of parts){
+        const line=p.split("\n").find(l=>l.startsWith("data:")); if(!line)continue;
+        const d=JSON.parse(line.slice(5).trim()); if(!d.node)continue;
+        // A second `retrieve` is the cycle doing its job — surfaced, because it is the
+        // thing that distinguishes this from a linear chain.
+        if(d.node==="retrieve"&&queries.length)attempts=queries.length+1;
+        step(d.node, d.node==="retrieve"?attempts:0);
+        if(d.query&&!queries.includes(d.query))queries.push(d.query);
+        if(d.answer)answer=d.answer;
+        if(d.grounded!==undefined)grounded=d.grounded;
+      }
+    }
+    const r=await fetch("/ask",{method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+KEY},
+      body:JSON.stringify({question})}).then(r=>r.json());
+    render(r);
+  }catch(err){
+    out.innerHTML=`<div class="card"><b>Error.</b> ${err.message}</div>`;
+  }finally{$("#go").disabled=false;}
+};
+
+function render(r){
+  const cites=(r.citations||[]).map(c=>`
+    <div class="cite">
+      <div class="loc">${esc(c.section)} — ${esc(c.document)}</div>
+      <div class="q">“${esc(c.quote)}”</div>
+      ${c.url?`<a href="${esc(c.url)}" target="_blank" rel="noopener">source ↗</a>`:""}
+    </div>`).join("");
+  out.innerHTML=`
+    <div class="card">
+      <span class="badge ${r.grounded?"grounded":"ungrounded"}">${r.grounded?"grounded":"not grounded"}</span>
+      <p class="answer">${esc(r.answer||"")}</p>
+    </div>
+    ${cites?`<div class="card"><h2>Citations (${r.citations.length})</h2>${cites}</div>`:""}
+    <div class="card meta">
+      attempts: ${r.attempts} · searches: ${(r.queries_tried||[]).length}
+      ${(r.queries_tried||[]).length>1?`<br>queries: ${r.queries_tried.map(esc).join(" → ")}`:""}
+    </div>`;
+}
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+</script>

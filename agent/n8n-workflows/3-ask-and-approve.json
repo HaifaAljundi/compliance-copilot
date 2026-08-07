@@ -1,0 +1,223 @@
+{
+  "name": "Agent — ask, approve, resume (closes the HITL loop)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "c3000000-0000-4000-8000-000000000001",
+      "name": "When clicking Test workflow",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent:8000/ask",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  question: 'What must a controller include when notifying a personal data breach?',\n  thread_id: 'n8n-' + $execution.id,\n  action: { action: 'create_compliance_ticket', payload: { severity: 'high' } }\n}) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "c3000000-0000-4000-8000-000000000002",
+      "name": "Ask the agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_AGENT_BEARER_CREDENTIAL_ID",
+          "name": "Agent API key"
+        }
+      },
+      "notes": "http://agent:8000 — the compose network, not the public URL. Nothing leaves the host.\nHeader Auth credential: name = Authorization, value = 'Bearer <AGENT_API_KEY>'.\nthread_id is what /resume later addresses, so it must be stable for this execution.\nTimeout 300s: the verifier can loop up to 3 attempts."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "s1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "awaiting_approval",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000003",
+      "name": "Approval needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -20,
+        0
+      ],
+      "notes": "The agent pauses at interrupt() BEFORE any side effect. If it answered without proposing an action, status is 'complete' and there is nothing to approve."
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendAndWait",
+        "sendTo": "approver@example.com",
+        "subject": "=Approve: {{ $json.approval.action }}",
+        "message": "=The compliance agent proposes an action.\n\nACTION\n{{ $json.approval.action }}\n\nANSWER IT IS BASED ON\n{{ $json.approval.answer }}\n\nEVIDENCE\n{{ $json.approval.evidence.map(e => '• ' + e.section + ' — \"' + e.quote + '\"').join('\\n') }}\n\nrun_id: {{ $json.approval.run_id }}",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double"
+          }
+        },
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000004",
+      "name": "Human approval",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        -100
+      ],
+      "webhookId": "approval-agent-action",
+      "notes": "Gmail send-and-wait. The node emails the reviewer with Approve / Disapprove buttons and PAUSES this workflow until one is clicked.\n\nOutput is {data:{approved:boolean}} — verified against the node's own schema, not assumed.\n\nThe reviewer sees the ANSWER and the EVIDENCE, not just an action name. Approving 'create_compliance_ticket' with no visible justification is rubber-stamping with extra steps.\n\nSwap this node for Slack or a Wait/form node if you prefer — nothing else in the workflow changes.",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent:8000/resume",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  thread_id: 'n8n-' + $execution.id,\n  approved: $json.data.approved === true,\n  approved_by: 'approver@example.com',\n  note: 'approved via n8n'\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "c3000000-0000-4000-8000-000000000005",
+      "name": "Resume the agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        -100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_AGENT_BEARER_CREDENTIAL_ID",
+          "name": "Agent API key"
+        }
+      },
+      "notes": "THIS IS THE STEP THAT CLOSES THE LOOP.\n\nThe agent has been paused since 'Ask the agent' returned. Its state is persisted in a checkpoint, so the pause survives an agent container restart — verified by killing the container mid-pause and resuming afterwards.\n\nThe graph continues from the checkpoint and only NOW fires the agent-action webhook, which workflow 2 receives.\n\nA rejection is also recorded rather than dropped: 'a human declined this' is an audit fact."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n1",
+              "name": "note",
+              "value": "Agent answered without proposing an action — nothing to approve.",
+              "type": "string"
+            },
+            {
+              "id": "n2",
+              "name": "answer",
+              "value": "={{ $json.answer }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000006",
+      "name": "No action proposed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "When clicking Test workflow": {
+      "main": [
+        [
+          {
+            "node": "Ask the agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask the agent": {
+      "main": [
+        [
+          {
+            "node": "Approval needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval needed?": {
+      "main": [
+        [
+          {
+            "node": "Human approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No action proposed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human approval": {
+      "main": [
+        [
+          {
+            "node": "Resume the agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

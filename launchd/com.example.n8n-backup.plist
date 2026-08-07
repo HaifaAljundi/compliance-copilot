@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.n8n-backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/YOUR_USER/Sites/n8n/backup.sh</string>
+    </array>
+
+    <!-- A launchd job does NOT inherit the interactive shell env. Set DOCKER_HOST
+         explicitly (Colima socket) or docker calls fail silently at 3am, plus PATH+HOME. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DOCKER_HOST</key>
+        <string>unix:///Users/YOUR_USER/.colima/default/docker.sock</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/YOUR_USER</string>
+    </dict>
+
+    <!-- 03:00 Asia/Dubai (launchd uses local time; the Mac is set to Gulf time).
+         If the machine is asleep at 03:00, launchd runs the missed job on wake —
+         but sleep is disabled on this box anyway. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>3</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/n8n/backup.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/n8n/backup.err.log</string>
+</dict>
+</plist>

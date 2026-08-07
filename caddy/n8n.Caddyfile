@@ -1,0 +1,85 @@
+# ===========================================================================
+# n8n — reverse proxy site block for the jump host (203.0.113.10)
+#
+# ADD THIS AS A NEW FILE / BLOCK. Do NOT merge it into an unrelated site block
+# and do NOT edit the global Caddyfile's shared snippets.
+#
+# How to apply on the jump host:
+#   1. Back up the live Caddyfile first (the dir is littered with .bak files):
+#        cp Caddyfile Caddyfile.bak.pre-n8n-$(date +%Y%m%d-%H%M%S)
+#   2. Append this block (or paste it near the other site blocks).
+#   3. Validate + reload (cert issues on first HTTPS hit):
+#        docker exec caddy-proxy caddy validate --config /etc/caddy/Caddyfile
+#        docker exec caddy-proxy caddy reload   --config /etc/caddy/Caddyfile
+#
+# TLS: Caddy auto-issues a Let's Encrypt cert for n8n.example.com (tls-alpn-01),
+#      same as your other *.example.com hosts — no manual cert files.
+# DNS: the *.example.com wildcard already resolves to the box (cloudflare-ddns);
+#      no per-host record needed.
+#
+# NOTE ON TIMEOUTS: your global proxy-transport snippet uses 300s. n8n long
+# executions need more, so this block sets its OWN 3600s transport + streams
+# the push/websocket connection (flush_interval -1). Websockets need NO map
+# block in Caddy — reverse_proxy upgrades them transparently. X-Forwarded-Proto
+# is set automatically (n8n side: N8N_PROXY_HOPS=1).
+# ===========================================================================
+
+n8n.example.com {
+	import compress
+	import security-headers
+
+	# ----- reusable proxy target (n8n on the Mac LAN; pf restricts source to this box) -----
+	# Defined once, used by both handles below.
+
+	# 1) PUBLIC: production webhooks + form triggers. No auth — third-party
+	#    services (Stripe, GitHub, …) must be able to POST here.
+	@public path /webhook/* /webhook-waiting/* /form/* /form-waiting/*
+	handle @public {
+		# --- OPTIONAL rate limit (defence against webhook abuse) ---
+		# REQUIRES the caddy-ratelimit module, which this Caddy build does NOT have
+		# (verified: `caddy list-modules | grep rate` → none). To enable: rebuild
+		# caddy-proxy with `xcaddy build --with github.com/mholt/caddy-ratelimit`,
+		# then uncomment. See RUNBOOK "Rate limiting". Until then, protect individual
+		# webhooks with Header Auth on the Webhook node (RUNBOOK "Webhook hardening").
+		# rate_limit {
+		# 	zone n8n_webhooks {
+		# 		key    {remote_host}
+		# 		events 60
+		# 		window 1m
+		# 	}
+		# }
+		reverse_proxy 10.0.0.10:5678 {
+			transport http {
+				read_timeout  3600s
+				write_timeout 3600s
+			}
+			flush_interval -1
+		}
+	}
+
+	# 2) EVERYTHING ELSE: editor UI + /rest API + push (websocket). GATED.
+	#    The editor never needs to face the open internet.
+	handle {
+		# --- Option A (recommended): reuse the jump host's existing forward-auth. ---
+		# Adjust to match your existing authelia snippet/container + portal domain.
+		# If you already have a shared `import authelia` snippet, replace the block
+		# below with:  import authelia
+		forward_auth authelia:9091 {
+			uri /api/verify?rd=https://YOUR-AUTHELIA-PORTAL-DOMAIN/
+			copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+		}
+
+		# --- Option B (alternative): static IP allowlist instead of authelia. ---
+		# Comment out the forward_auth above and uncomment:
+		# @notallowed not remote_ip 203.0.113.10 198.51.100.0/24   # <-- your office/VPN IPs
+		# respond @notallowed "Forbidden" 403
+
+		reverse_proxy 10.0.0.10:5678 {
+			transport http {
+				read_timeout  3600s
+				write_timeout 3600s
+			}
+			flush_interval -1
+		}
+	}
+}
