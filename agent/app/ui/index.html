@@ -38,6 +38,11 @@
   <h1>Compliance document assistant</h1>
   <div class="sub">DIFC Data Protection Law · CBUAE AML/CFT guidance — answers are refused unless grounded in a cited passage.</div>
 
+  <form id="auth" hidden>
+    <input id="k" type="password" placeholder="Agent API key" autocomplete="off" required>
+    <button>Save key</button>
+  </form>
+
   <form id="f">
     <input id="q" placeholder="Ask about the indexed regulations…" autocomplete="off" required>
     <button id="go">Ask</button>
@@ -53,10 +58,30 @@
   <div id="out"></div>
 </main>
 <script>
-const $=s=>document.querySelector(s), pipe=$("#pipe"), out=$("#out");
-// Set at build/deploy time. Kept out of the page for a real deployment — this UI is
-// served on the private compose network only.
-const KEY = new URLSearchParams(location.search).get("key") || "";
+const $=s=>document.querySelector(s), pipe=$("#pipe"), out=$("#out"), auth=$("#auth");
+
+// The bearer token lives in sessionStorage for the tab's lifetime, never in the URL. A
+// query string is the worst place to carry a credential: uvicorn's access log records the
+// full request line, the browser keeps it in history, and it rides along in the Referer of
+// any outbound link clicked from this page. A `?key=` is still honoured once — some
+// bookmarks and the runbook use it — but it is adopted and scrubbed immediately.
+const key = () => sessionStorage.getItem("agentKey") || "";
+
+(function adoptKeyFromUrl(){
+  const p = new URLSearchParams(location.search), fromUrl = p.get("key");
+  if(!fromUrl) return;
+  sessionStorage.setItem("agentKey", fromUrl);
+  p.delete("key");
+  history.replaceState(null, "", location.pathname + (p.toString() ? "?"+p : ""));
+})();
+
+auth.hidden = !!key();
+auth.onsubmit = e => {
+  e.preventDefault();
+  const v = $("#k").value.trim(); if(!v) return;
+  sessionStorage.setItem("agentKey", v);
+  $("#k").value = ""; auth.hidden = true; out.innerHTML = "";
+};
 
 document.querySelectorAll(".ex button").forEach(b=>b.onclick=()=>{$("#q").value=b.dataset.q; $("#f").requestSubmit();});
 
@@ -77,9 +102,13 @@ $("#f").onsubmit=async e=>{
   let answer="", grounded=false, attempts=0, queries=[];
   try{
     const res=await fetch("/ask/stream",{method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+KEY},
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key()},
       body:JSON.stringify({question})});
-    if(!res.ok){throw new Error(res.status===401?"Unauthorized — append ?key=YOUR_AGENT_API_KEY to the URL":`HTTP ${res.status}`);}
+    if(!res.ok){
+      if(res.status===401){auth.hidden=false; $("#k").focus();
+        throw new Error("Unauthorized — enter your agent API key above.");}
+      throw new Error(`HTTP ${res.status}`);
+    }
 
     const reader=res.body.getReader(), dec=new TextDecoder(); let buf="";
     while(true){
@@ -99,7 +128,7 @@ $("#f").onsubmit=async e=>{
       }
     }
     const r=await fetch("/ask",{method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+KEY},
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key()},
       body:JSON.stringify({question})}).then(r=>r.json());
     render(r);
   }catch(err){
@@ -108,12 +137,15 @@ $("#f").onsubmit=async e=>{
 };
 
 function render(r){
-  const cites=(r.citations||[]).map(c=>`
+  const cites=(r.citations||[]).map(c=>{
+    const u=safeUrl(c.url);
+    return `
     <div class="cite">
       <div class="loc">${esc(c.section)} — ${esc(c.document)}</div>
       <div class="q">“${esc(c.quote)}”</div>
-      ${c.url?`<a href="${esc(c.url)}" target="_blank" rel="noopener">source ↗</a>`:""}
-    </div>`).join("");
+      ${u?`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">source ↗</a>`:""}
+    </div>`;
+  }).join("");
   out.innerHTML=`
     <div class="card">
       <span class="badge ${r.grounded?"grounded":"ungrounded"}">${r.grounded?"grounded":"not grounded"}</span>
@@ -126,4 +158,15 @@ function render(r){
     </div>`;
 }
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// `esc()` stops an attribute breakout; it says nothing about the SCHEME, and a scheme is
+// what turns an href into code. `compliance_chunks` has two writers — the Python ingester
+// and the n8n PGVector node — so a chunk's `url` metadata is not guaranteed to be a web
+// link. Allowlist http(s) and render nothing otherwise.
+const safeUrl=u=>{
+  if(!u) return "";
+  try{const p=new URL(u,location.origin);
+      return (p.protocol==="http:"||p.protocol==="https:")?p.href:"";}
+  catch{return "";}
+};
 </script>

@@ -7,7 +7,13 @@ and among the cheapest to test — because edges.py contains no LLM call at all.
 
 import pytest
 
-from app.graph.edges import route_after_analyze, route_after_verify, route_from_supervisor
+from app.graph.edges import (
+    SUPERVISOR_MAP,
+    VERIFY_MAP,
+    route_after_analyze,
+    route_after_verify,
+    route_from_supervisor,
+)
 from app.graph.state import Verdict, initial_state
 
 
@@ -66,9 +72,13 @@ class TestVerifyRouting:
 class TestActionReachability:
     """The double-fire guard, expressed as a property of the graph rather than a comment.
 
-    `act` must be reachable ONLY from a passing verdict. If the analyst could reach it
-    directly, a verifier loop-back would re-run it and POST the n8n webhook twice —
-    downstream, two tickets or two filings.
+    In the verify arm, `act` must be reachable ONLY from a passing verdict. If the analyst
+    or the supervisor could reach it directly, a verifier loop-back would re-run it and
+    POST the n8n webhook twice — downstream, two tickets or two filings.
+
+    Asserting this on route_after_verify alone is not enough: the destination MAPS are the
+    other half of the wiring, and a map entry pointing at `act` opens an entrance no
+    routing-function test can see.
     """
 
     def test_act_requires_a_grounded_verdict(self):
@@ -81,3 +91,19 @@ class TestActionReachability:
     def test_no_verifier_arm_still_gates_on_a_request(self):
         assert route_after_analyze(_s()) == "finish"
         assert route_after_analyze(_s(action_request={"action": "x"})) == "act"
+
+    def test_supervisor_has_no_edge_to_act(self):
+        """The supervisor decides from the raw question, before any retrieval has run.
+
+        An edge from there to `act` would deliver an approval request carrying no answer
+        and no evidence — the rubber-stamp the interrupt exists to prevent — and would
+        also bypass the verifier entirely.
+        """
+        assert "act" not in SUPERVISOR_MAP.values()
+
+    def test_supervisors_act_decision_routes_through_retrieval(self):
+        assert route_from_supervisor(_s(route="act")) == "act"
+        assert SUPERVISOR_MAP["act"] == "retrieve"
+
+    def test_verify_is_the_only_map_that_reaches_act_in_the_verify_arm(self):
+        assert VERIFY_MAP["act"] == "act"

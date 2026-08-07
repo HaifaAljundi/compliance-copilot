@@ -12,9 +12,17 @@ Three properties this file exists to guarantee:
                protection against a double-fire caused by a process restart — which
                graph topology alone cannot prevent.
 
-  AUTHENTICITY Header Auth proves the caller knows a shared secret. An HMAC-SHA256 over
-               the RAW body additionally proves the body was not altered. The header
-               alone cannot tell you that.
+  AUTHENTICITY Header Auth proves the caller knows a shared secret. The HMAC-SHA256 over
+               the RAW body binds that secret to the exact bytes sent, so n8n rejects a
+               body that does not match the digest it was given.
+
+               Be precise about what this does NOT buy: the signature is keyed on the
+               SAME secret the header carries in cleartext (config.n8n_webhook_secret),
+               so it is a second gate on one credential, not independent proof of
+               integrity. Anyone who can read a request can re-sign an altered one. To
+               make the integrity claim real, give the signature its own key — a separate
+               setting, or HKDF from a shared root with distinct info strings — and n8n a
+               credential that holds only that key.
 
   RESTRAINT    Retries happen ONLY on connect errors, timeouts and 5xx. Never on 4xx: a
                401 is a wrong secret and a 422 is a malformed payload, and repeating

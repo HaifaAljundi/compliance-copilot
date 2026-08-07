@@ -2,9 +2,10 @@
 
 Two independent protections against firing an n8n workflow twice. Both are needed.
 
-  TOPOLOGY   This node is reachable ONLY from a passing verifier verdict (see
-             edges.route_after_verify). The analyst can never reach it directly, so a
-             loop-back cannot re-run it.
+  TOPOLOGY   In the verify arm this node is reachable ONLY from a passing verifier verdict
+             (see edges.route_after_verify). Neither the analyst nor the supervisor can
+             reach it directly, so a loop-back cannot re-run it. The no-verifier control
+             arm has no cycle and reaches `act` from route_after_analyze instead.
 
   IDEMPOTENCY `run_id` is minted once per run and sent with every attempt, including
              retries. Topology cannot protect against a process restart mid-run, a

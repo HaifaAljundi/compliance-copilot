@@ -45,8 +45,10 @@ def route_after_verify(state: AgentState) -> str:
 
     if verdict["grounded"]:
         # A grounded answer proceeds to the action node only if an action was actually
-        # requested. Note this is the ONLY path to `act`: the analyst can never reach it
-        # directly, which is what prevents the cycle from firing an n8n webhook twice.
+        # requested. In the verify arm this is the ONLY path to `act` — the analyst cannot
+        # reach it directly and SUPERVISOR_MAP does not route there — which is what
+        # prevents the cycle from firing an n8n webhook twice. (The no-verifier control
+        # arm has no cycle, so route_after_analyze may reach `act` on its own.)
         return "act" if state.get("action_request") else "finish"
 
     if state.get("attempts", 0) >= _max_attempts(state):
@@ -73,6 +75,13 @@ def _max_attempts(state: AgentState) -> int:
 # Mapping from a routing function's return value to graph node names. Declared next to the
 # functions so a renamed node is a one-line change in one file, and so the set of legal
 # destinations is readable without reconstructing it from build.py.
-SUPERVISOR_MAP = {"retrieve": "retrieve", "act": "act", "answer": "respond"}
+#
+# The supervisor's "act" decision deliberately lands on `retrieve`, not on `act`. Wiring it
+# straight to `act` would give a second entrance to the side-effect node — one that skips
+# retrieval and verification entirely, so `_evidence()` would find no citations and the
+# human reviewer would be shown an action name with nothing behind it. Routing through
+# retrieval costs one search and keeps the invariant in route_after_verify true: a passing
+# verdict is the only way in. The decision itself is still recorded in the trace.
+SUPERVISOR_MAP = {"retrieve": "retrieve", "act": "retrieve", "answer": "respond"}
 VERIFY_MAP = {"retrieve": "retrieve", "act": "act", "refuse": "refuse", "finish": END}
 ANALYZE_MAP = {"act": "act", "finish": END}

@@ -73,7 +73,7 @@ All except `/healthz` require `Authorization: Bearer $AGENT_API_KEY`.
 ## Tests
 
 ```bash
-pytest -m 'not integration'   # 56 tests, no network, no containers
+pytest -m 'not integration'   # 59 tests, no network, no containers
 pytest -m integration         # 6 tests, needs pgvector + Ollama
 ```
 

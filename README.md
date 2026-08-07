@@ -99,7 +99,9 @@ The action, the answer it is based on, every citation with its verbatim quote an
 
 ### Action receiver — HMAC + idempotency
 
-Header Auth proves the caller knows the shared secret; HMAC-SHA256 over the **raw** body proves the body wasn't altered; dedupe on `run_id` proves a retried delivery doesn't become a second ticket. Responds **202 Accepted**, never 200 — a long compliance workflow must not hold the HTTP connection open.
+Header Auth proves the caller knows the shared secret; HMAC-SHA256 over the **raw** body binds that secret to the exact bytes sent, so a body that doesn't match its digest is rejected; dedupe on `run_id` proves a retried delivery doesn't become a second ticket. Responds **202 Accepted**, never 200 — a long compliance workflow must not hold the HTTP connection open.
+
+One honest caveat: the signature is keyed on the *same* secret the header carries in cleartext, so it's a second gate on one credential rather than independent proof of integrity — anyone who can read a request can re-sign an altered one. Giving the signature its own key is a one-setting change and is noted in `app/tools/n8n.py`.
 
 ![n8n workflow: action receiver](docs/screenshots/2-action-receiver.png)
 
@@ -195,7 +197,7 @@ Notes for anyone changing this:
     │   ├── api.py  config.py  llm.py
     │   └── ui/index.html       # minimal streaming demo UI
     ├── evals/                  # recall@k, gold-set generation, A/B harness
-    ├── tests/                  # 62 tests (56 need no network and no database)
+    ├── tests/                  # 65 tests (59 need no network and no database)
     ├── n8n-workflows/          # 3 paste-ready workflows + import guide
     ├── Dockerfile  pyproject.toml  .env.example
     └── HOW-IT-WORKS.md         # the deep technical walkthrough
@@ -234,7 +236,7 @@ PGVECTOR_HOST=127.0.0.1 PGVECTOR_PORT=5433 OLLAMA_BASE_URL=http://127.0.0.1:1143
 Then import the three workflows in `agent/n8n-workflows/` — the README there covers the credentials they need and the order to do it in.
 
 ```bash
-pytest -m 'not integration'   # 56 tests, no network, no containers
+pytest -m 'not integration'   # 59 tests, no network, no containers
 python -m evals.metrics       # recall@3/5/10 — run this FIRST on any new corpus
 python -m evals.run_ab        # A/B with and without the verifier → results.csv
 ```
