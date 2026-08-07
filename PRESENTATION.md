@@ -383,7 +383,7 @@ retries. The receiving workflow deduplicates on it. Topology prevents the cycle 
 double-firing; the key protects against process restarts and lost responses — both are
 needed.
 
-**Testing:** 61 automated tests. 55 run with no network and no database, covering routing
+**Testing:** 62 automated tests. 56 run with no network and no database, covering routing
 logic, state semantics, and webhook retry behaviour — deliberately the parts whose failures
 are silent rather than loud.
 

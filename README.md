@@ -195,7 +195,7 @@ Notes for anyone changing this:
     │   ├── api.py  config.py  llm.py
     │   └── ui/index.html       # minimal streaming demo UI
     ├── evals/                  # recall@k, gold-set generation, A/B harness
-    ├── tests/                  # 61 tests (55 need no network and no database)
+    ├── tests/                  # 62 tests (56 need no network and no database)
     ├── n8n-workflows/          # 3 paste-ready workflows + import guide
     ├── Dockerfile  pyproject.toml  .env.example
     └── HOW-IT-WORKS.md         # the deep technical walkthrough
@@ -234,7 +234,7 @@ PGVECTOR_HOST=127.0.0.1 PGVECTOR_PORT=5433 OLLAMA_BASE_URL=http://127.0.0.1:1143
 Then import the three workflows in `agent/n8n-workflows/` — the README there covers the credentials they need and the order to do it in.
 
 ```bash
-pytest -m 'not integration'   # 55 tests, no network, no containers
+pytest -m 'not integration'   # 56 tests, no network, no containers
 python -m evals.metrics       # recall@3/5/10 — run this FIRST on any new corpus
 python -m evals.run_ab        # A/B with and without the verifier → results.csv
 ```

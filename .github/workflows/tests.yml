@@ -20,21 +20,23 @@ jobs:
         working-directory: agent
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
+          cache-dependency-glob: agent/uv.lock
+          python-version: "3.11"
 
+      # --locked fails rather than silently re-resolving if uv.lock has drifted
+      # from pyproject.toml. Direct dependencies are pinned exactly in
+      # pyproject.toml; the lock is what pins the transitives, so CI runs the
+      # same dependency graph twice in a row.
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Test (offline only)
         # Collection imports every test module, including the integration ones,
@@ -45,4 +47,4 @@ jobs:
           GROQ_API_KEY: ci-dummy
           N8N_WEBHOOK_SECRET: ci-dummy
           AGENT_API_KEY: ci-dummy
-        run: pytest -m 'not integration'
+        run: uv run pytest -m 'not integration'

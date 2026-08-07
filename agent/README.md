@@ -73,8 +73,8 @@ All except `/healthz` require `Authorization: Bearer $AGENT_API_KEY`.
 ## Tests
 
 ```bash
-pytest -m 'not integration'   # 49 tests, no network, no containers
-pytest -m integration         # 4 tests, needs pgvector + Ollama
+pytest -m 'not integration'   # 56 tests, no network, no containers
+pytest -m integration         # 6 tests, needs pgvector + Ollama
 ```
 
 The offline set covers routing, reducers, query cleaning, and the webhook retry/idempotency

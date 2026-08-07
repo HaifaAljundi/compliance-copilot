@@ -312,8 +312,8 @@ publishes only a loopback port. Inside containers the defaults are correct.
 
 ```bash
 cd agent
-pytest -m 'not integration'             # 55 tests, no network, no containers
-pytest -m integration                   # 4 tests, needs pgvector + Ollama
+pytest -m 'not integration'             # 56 tests, no network, no containers
+pytest -m integration                   # 6 tests, needs pgvector + Ollama
 python -m evals.metrics                 # recall@k — always run this first
 python -m evals.run_ab                  # the A/B → results.csv
 ```
