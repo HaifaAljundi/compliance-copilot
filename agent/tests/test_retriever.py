@@ -53,7 +53,8 @@ class TestCleanQuery:
 
     def test_takes_the_last_line_not_the_first(self):
         """Reasoning precedes the payload, so the first line is the wrong end."""
-        assert _clean_query("<think>x</think>\npreamble\nactual query terms") == "actual query terms"
+        raw = "<think>x</think>\npreamble\nactual query terms"
+        assert _clean_query(raw) == "actual query terms"
 
     def test_unterminated_think_block_yields_nothing(self):
         """Cut off mid-reasoning: stripping the tag alone would make the reasoning itself

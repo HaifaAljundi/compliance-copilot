@@ -100,7 +100,7 @@ def sample_chunks(per_doc: int, seed: int = 7) -> list[dict]:
         by_doc.setdefault(r.d, {}).setdefault(r.s, []).append(r)
 
     picked = []
-    for doc, sections in by_doc.items():
+    for sections in by_doc.values():
         keys = sorted(sections)
         rng.shuffle(keys)
         for sec in keys[:per_doc]:

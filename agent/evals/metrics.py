@@ -13,10 +13,10 @@ lose a day.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from app.retrieval.store import get_store
-from evals.gold import GOLD_PATH, GoldItem, load_gold
+from evals.gold import GoldItem, load_gold
+
 
 def retrieve_sections(question: str, k: int) -> list[tuple[str, str]]:
     """Return (doc_id, section) for the top-k chunks. Sections, not chunk ids.
@@ -59,7 +59,8 @@ def main() -> None:
     for k in [args.k] if args.k else [3, 5, 10]:
         rate, scored = recall_at_k(items, k)
         flag = "PASS" if rate >= 0.7 else "BELOW TARGET"
-        print(f"recall@{k:<3} {rate:.0%}   ({sum(1 for _i,h,_g in scored if h)}/{len(scored)})  {flag}")
+        hits = sum(1 for _i, h, _g in scored if h)
+        print(f"recall@{k:<3} {rate:.0%}   ({hits}/{len(scored)})  {flag}")
         if args.verbose:
             for item, hit, got in scored:
                 if hit and not args.verbose:

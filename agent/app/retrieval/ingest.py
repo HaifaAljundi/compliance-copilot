@@ -27,9 +27,9 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy import text as sql
 
+from app.config import VECTOR_TABLE
 from app.retrieval.corpus import CORPUS, FETCH_USER_AGENT, DocumentSpec
 from app.retrieval.store import get_store, get_sync_engine, init_table
-from app.config import VECTOR_TABLE
 
 # Chunk sizing. ~1200 chars keeps a typical article or sub-clause group intact while
 # staying well inside nomic-embed-text's window. Overlap carries a sentence of context

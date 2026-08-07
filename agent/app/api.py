@@ -184,7 +184,9 @@ async def ask_stream(req: AskRequest) -> StreamingResponse:
             try:
                 for chunk in _state["graph"].stream(state, _config(thread), stream_mode="updates"):
                     for node, update in chunk.items():
-                        loop.call_soon_threadsafe(queue.put_nowait, {"node": node, "update": update})
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait, {"node": node, "update": update}
+                        )
                 loop.call_soon_threadsafe(queue.put_nowait, None)
             except Exception as exc:
                 loop.call_soon_threadsafe(

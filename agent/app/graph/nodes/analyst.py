@@ -23,11 +23,10 @@ a verifier call on, which is what keeps the Verifier's cost defensible in the A/
 from __future__ import annotations
 
 from time import perf_counter
+from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -136,7 +135,9 @@ def validate_citations(
     for cit in citations:
         chunk = by_id.get(cit["chunk_id"])
         if chunk is None:
-            problems.append(f"fabricated chunk_id {cit['chunk_id']!r} for claim: {cit['claim'][:70]}")
+            problems.append(
+                f"fabricated chunk_id {cit['chunk_id']!r} for claim: {cit['claim'][:70]}"
+            )
             continue
         needle = " ".join(cit["quote"].split())
         haystack = " ".join(chunk["text"].split())
@@ -181,7 +182,9 @@ def analyze(state: AgentState) -> dict:
     tok_in = tok_out = 0
     while used < budget:
         ai: AIMessage = llm_tools.invoke(messages)
-        u = usage_of(ai); tok_in += u["prompt_tokens"]; tok_out += u["completion_tokens"]
+        u = usage_of(ai)
+        tok_in += u["prompt_tokens"]
+        tok_out += u["completion_tokens"]
         messages.append(ai)
         if not ai.tool_calls:
             break
@@ -193,7 +196,9 @@ def analyze(state: AgentState) -> dict:
         if used >= budget:
             # Say so explicitly. Silently truncating a tool loop produces an answer built
             # on partial evidence with no indication that anything was cut off.
-            messages.append(HumanMessage(content="Tool budget exhausted. Answer with what you have."))
+            messages.append(
+                HumanMessage(content="Tool budget exhausted. Answer with what you have.")
+            )
             break
 
     # Chunks pulled by search_corpus during the loop must join `retrieved`, or a citation

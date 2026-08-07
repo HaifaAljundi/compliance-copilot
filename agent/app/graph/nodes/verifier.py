@@ -27,13 +27,12 @@ on failure, and its output is a search instruction for the retriever, not a judg
 from __future__ import annotations
 
 from time import perf_counter
-
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from app.graph.state import AgentState, Verdict
-from app.llm import get_chat, invoke_structured, model_for
+from app.llm import invoke_structured, model_for
 
 # No question, no answer, no document title — one claim, one passage. Everything omitted
 # here is material the judge would otherwise use to talk itself into agreement.
@@ -206,7 +205,11 @@ def build_refusal(state: AgentState) -> dict:
             "I cannot answer this from the available sources.\n\n"
             f"After {state.get('attempts', 0)} retrieval attempts, no passage in the "
             "corpus supports a grounded answer.\n"
-            + (f"Gap identified: {verdict.get('missing_evidence')}\n" if verdict.get("missing_evidence") else "")
+            + (
+                f"Gap identified: {verdict.get('missing_evidence')}\n"
+                if verdict.get("missing_evidence")
+                else ""
+            )
             + (f"Closest material reviewed: {', '.join(sections)}.\n" if sections else "")
             + f"Searches tried: {len(tried)}."
         ),
