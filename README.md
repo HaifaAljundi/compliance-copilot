@@ -254,35 +254,3 @@ See [`RUNBOOK.md`](RUNBOOK.md) for firewall, TLS, backups, upgrades, and failure
 | `GET /healthz` | container healthcheck | The only unauthenticated route |
 
 All except `/healthz` require `Authorization: Bearer $AGENT_API_KEY`.
-
----
-
-## Honest limitations
-
-Stated plainly, because a compliance product that oversells itself is the wrong product.
-
-- **The corpus is small.** Three documents. Adding more is routine, but retrieval accuracy on a 50-document corpus has not been measured and should not be assumed identical.
-- **It is an assistant, not an authority.** It finds and quotes what the documents say. It does not interpret ambiguity, weigh conflicting provisions, or replace professional judgment. Every answer is designed to be checked against the source — that is why the quotes and links are there.
-- **Coverage is exactly the documents indexed.** "It refused" and "no such rule exists" are different statements.
-- **The evaluation is a single run.** No variance bars. Directionally sound, not publication-grade.
-- **Gold-set bias.** 31% of generated questions contain an explicit locator ("Under DIFC Article 35…") because the generator prompt included the section label. Those are easier than real user questions, so recall is optimistic.
-- **Amended regulations must be re-indexed.** Automatable on an n8n schedule, but if a document changes and nobody re-indexes it, the assistant will confidently cite the old version. This is the highest-risk operational failure mode.
-- **One demo shortcut:** the built-in web UI passes its access key in the URL. Fine on a private machine, unsuitable for shared deployment — a real rollout needs proper login.
-
-### Next steps
-
-Prove it on a client's actual documents (retrieval accuracy is corpus-specific; everything else is engineering that already works) · expand the test set, especially questions that *should* be refused · route only low-confidence answers through full verification instead of paying for it every time · automate corpus freshness against regulator publication pages.
-
----
-
-## License
-
-[MIT](LICENSE) — © 2026 Haifa Aljundi.
-
-The regulatory documents this system indexes are not distributed here. They are published by the DIFC and the Central Bank of the UAE, re-fetchable from their source URLs, and carry their own terms; `agent/corpus/` is gitignored for that reason.
-
----
-
-## Security
-
-The two `.env` files are gitignored and never committed. `N8N_ENCRYPTION_KEY` is the single point of unrecoverability — if it changes, every saved n8n credential becomes unreadable; it is backed up inside every archive by `backup.sh` and must never be logged or committed. The agent's `.env` is deliberately separate from the infra `.env` so that this newer, less-proven service never reads that key.
